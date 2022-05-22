@@ -1,6 +1,7 @@
 package sock
 
-import kotlinx.coroutines.Runnable
+//import kotlinx.coroutines.Runnable
+import org.json.JSONObject
 import java.io.IOException
 import java.net.ServerSocket
 import java.net.Socket
@@ -9,6 +10,14 @@ import java.util.concurrent.Executors
 
 fun main(){
     ChatServer().startServer()
+}
+
+fun JSONObject.sendParse(message: String): String{
+    var jsondata = JSONObject().apply {
+        put(Client.MESSAGE_KEY, message)
+        put(Client.MESSAGE_ID, "conect_id")
+    }
+    return jsondata.toString()
 }
 
 class ChatServer {
@@ -64,7 +73,9 @@ class ChatServer {
 
                         //접속자 알림
                         connections.forEach { client ->
-                            client.send("${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속 하였습니다.")
+                            val msg = JSONObject().sendParse("${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속 하였습니다.")
+                            println(" connection user:${msg}")
+                            client.send(msg)
                         }
 
                     }catch(e: Exception){
@@ -120,11 +131,13 @@ class Client(val socket: Socket) {
 
                         var message: String = it
                         if(message.toUpperCase() == "QUIT"){
-                            message = "${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} 접속종료 하였습니다."
+//                            message = "${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} 접속종료 하였습니다."
+                            message = JSONObject().sendParse("${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속종료 하였습니다.")
                         }
 
                         println(message)
                         ChatServer.connections.forEach { client ->
+//                            client.send(message+"\n")
                             client.send(message)
                         }
 
@@ -151,11 +164,13 @@ class Client(val socket: Socket) {
     }
 
     fun send(data: String){
+
         val runnable = object: Runnable{
 
             override fun run() {
                 try{
                     socket.outputStream?.let{
+//                        it.write( (jsonString + "\n").toByteArray(Charsets.UTF_8) )
                         it.write( (data + "\n").toByteArray(Charsets.UTF_8) )
                         it.flush()
                     }
@@ -173,6 +188,14 @@ class Client(val socket: Socket) {
             }
         }
         ChatServer.executorServiceSubmit(runnable)
+    }
+
+
+
+
+    companion object{
+        const val MESSAGE_KEY = "msgData"
+        const val MESSAGE_ID = "msgId"
     }
 }
 
