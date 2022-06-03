@@ -2,6 +2,7 @@ package sock
 
 //import kotlinx.coroutines.Runnable
 import org.json.JSONObject
+import sock.ChatServer.Companion.isUser
 import java.io.IOException
 import java.net.ServerSocket
 import java.net.Socket
@@ -12,12 +13,13 @@ fun main(){
     ChatServer().startServer()
 }
 
-fun JSONObject.sendParse(message: String): String{
+fun JSONObject.putData(key: String, value: String): JSONObject{
     var jsondata = JSONObject().apply {
-        put(Client.MESSAGE_KEY, message)
-        put(Client.MESSAGE_ID, "conect_id")
+        put(key, value)
+//        put(Client.MESSAGE_ID, "conect_id")
     }
-    return jsondata.toString()
+//    return jsondata.toString()
+    return jsondata
 }
 
 class ChatServer {
@@ -28,13 +30,28 @@ class ChatServer {
 
     companion object{
 
+        //접속 Client 담아두기
         val connections = mutableListOf<Client>()
+        //사용자 담아두기
+        val users = mutableSetOf<String>()
+
         @JvmStatic lateinit var executorService: ExecutorService
 
         fun removeClient(client: Client) = connections.remove(client)
         fun addClient(client: Client) = connections.add(client)
 
         fun executorServiceSubmit(runnable: Runnable) = executorService.submit(runnable)
+
+        // 동명사용자 여부 확인
+        fun isUser(user: String): Boolean{
+            val result = users.contains(user)
+            if(!result){
+                users.add(user)
+            }
+            println("isUser ${result} ")
+            return result
+        }
+
 
     }
 
@@ -72,11 +89,16 @@ class ChatServer {
                         | ========================== """.trimMargin())
 
                         //접속자 알림
-                        connections.forEach { client ->
-                            val msg = JSONObject().sendParse("${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속 하였습니다.")
-                            println(" connection user:${msg}")
-                            client.send(msg)
-                        }
+//                        connections.forEach { client ->
+//
+//
+//                            val msg = JSONObject().sendParse("${socket.getRemoteSocketAddress()} : ${
+//                                Thread.currentThread().getName()
+//                            } 접속 하였습니다.")
+//
+//                            println(" connection user:${msg}")
+//                            client.send(msg)
+//                        }
 
                     }catch(e: Exception){
                         if(!serverSocket.isClosed){
@@ -132,13 +154,52 @@ class Client(val socket: Socket) {
                         var message: String = it
                         if(message.toUpperCase() == "QUIT"){
 //                            message = "${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} 접속종료 하였습니다."
-                            message = JSONObject().sendParse("${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속종료 하였습니다.")
+                            message = JSONObject().apply {
+                                put(MESSAGE_KEY,"${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속종료 하였습니다.")
+                            }.toString()
                         }
 
-                        println(message)
+
                         ChatServer.connections.forEach { client ->
-//                            client.send(message+"\n")
+
+                            when(socket.getRemoteSocketAddress())
+                            {
+                                client.socket.remoteSocketAddress -> {
+                                    val userObj = JSONObject(it)
+                                    val user = userObj.get(NICKNAME_KEY).toString()
+                                    val chkFlag = userObj.get(NICKNAME_CHK).toString()
+
+                                    println("USER = ${user} ")
+
+                                    when{
+                                        !"Y".equals(chkFlag) && isUser(user) -> {
+                                            println("USER Name Sender ")
+                                            message = JSONObject().apply {
+                                                put(MESSAGE_KEY,"이미 사용중인 닉내임 입니다.")
+                                                put(NICKNAME_CHK,"N")
+                                            }.toString()
+                                        }
+                                        else -> {
+                                            message = userObj.apply {
+                                                put(NICKNAME_CHK,"Y")
+                                            }.toString()
+                                        }
+                                    }
+
+//                                    if(!"Y".equals(chkFlag) && isUser(user)){
+//                                        println("USER Name Sender ")
+//                                        message = JSONObject().apply {
+//                                            put(MESSAGE_KEY,"이미 사용중인 닉내임 입니다.")
+//                                            put(NICKNAME_KEY,"N")
+//                                        }.toString()
+//                                    }
+                                }
+
+                            }
+
+                            println(message)
                             client.send(message)
+
                         }
 
                         if(it?.toUpperCase() == "QUIT"){
@@ -196,6 +257,8 @@ class Client(val socket: Socket) {
     companion object{
         const val MESSAGE_KEY = "msgData"
         const val MESSAGE_ID = "msgId"
+        const val NICKNAME_KEY = "nickname_key"
+        const val NICKNAME_CHK = "nickname_chk"
     }
 }
 
