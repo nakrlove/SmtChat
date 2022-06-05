@@ -1,5 +1,6 @@
 package sock
 
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.InetAddress
@@ -12,11 +13,15 @@ fun main(){
 }
 
 class ChatClient {
-
     companion object{
+        const val MESSAGE_DATA = "msgData"
+        const val MESSAGE_ID = "msgId"
+        const val NICKNAME_KEY = "nickname_key"
+        const val NICKNAME_CHK = "nickname_chk"
         const val QUIT:String = "QUIT"
         lateinit var socket:Socket
     }
+
     fun startClient(){
 
         var thread: Thread?  = object:Thread() {
@@ -90,13 +95,16 @@ class ChatClient {
     }
 
     fun send(data: String){
-
-        val thread = object:Thread() {
-            override fun run() {
+        var jsondata = JSONObject().apply {
+            put(NICKNAME_KEY, "nickNameKeyTEST")
+            put(NICKNAME_CHK, "Y")
+            put(MESSAGE_DATA,data)
+        }
+        Thread() {
 
                 try{
                     socket.outputStream?.let{
-                        it.write( (data + "\n").toByteArray(Charsets.UTF_8) )
+                        it.write( (jsondata.toString() + "\n").toByteArray(Charsets.UTF_8) )
                         it.flush()
                     }
                     //연결 종료
@@ -108,12 +116,11 @@ class ChatClient {
                     if (!socket.isClosed) {
                         stopClient()
                     }
-                    return
                 }
-            }
-        }
-        thread.start()
+        }.start()
     }
+
+
 
 }
 

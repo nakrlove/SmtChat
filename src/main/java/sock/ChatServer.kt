@@ -3,6 +3,7 @@ package sock
 //import kotlinx.coroutines.Runnable
 import org.json.JSONObject
 import sock.ChatServer.Companion.isUser
+import sock.ChatServer.Companion.userCount
 import java.io.IOException
 import java.net.ServerSocket
 import java.net.Socket
@@ -33,22 +34,27 @@ class ChatServer {
         //접속 Client 담아두기
         val connections = mutableListOf<Client>()
         //사용자 담아두기
-        val users = mutableSetOf<String>()
+        val users = hashMapOf<String,String>()
 
-        @JvmStatic lateinit var executorService: ExecutorService
+        @JvmStatic lateinit var ServerExecutorService: ExecutorService
+        @JvmStatic lateinit var ClientExecutorService: ExecutorService
 
         fun removeClient(client: Client) = connections.remove(client)
+        fun removeUser(connectInfo: String) = users.remove(connectInfo)
         fun addClient(client: Client) = connections.add(client)
 
-        fun executorServiceSubmit(runnable: Runnable) = executorService.submit(runnable)
+        fun userCount() = users.count()
+        fun ServerServiceSubmit(runnable: Runnable) = ServerExecutorService.submit(runnable)
+        fun ClientServiceSubmit(runnable: Runnable) = ClientExecutorService.submit(runnable)
 
         // 동명사용자 여부 확인
-        fun isUser(user: String): Boolean{
-            val result = users.contains(user)
+        fun isUser(protocal: String ,user: String): Boolean{
+            val result = users.containsKey(protocal)
+            println("1 isUser ${result} ")
             if(!result){
-                users.add(user)
+                users.put("${protocal}",user)
             }
-            println("isUser ${result} ")
+            println("2 isUser ${result} ")
             return result
         }
 
@@ -56,8 +62,9 @@ class ChatServer {
     }
 
     fun startServer(){
+        ClientExecutorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
 
-        executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+        ServerExecutorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
         try{
             serverSocket = ServerSocket(6789)
 
@@ -81,11 +88,13 @@ class ChatServer {
 
                         val socket = serverSocket.accept()
 //                        connections.add(Client(socket))
-                        addClient(Client(socket))
+                        val client = Client(socket)
+                        addClient(client)
+                        ClientServiceSubmit(client)
                         clientInfo = "[연결 수락 :  ${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()}]"
                         println(""" ==========================
                         |           connected check!!
-                        |    ${clientInfo} / [연결 개수 : ${connections.size} ]
+                        |    ${clientInfo} / [연결 개수 : ${connections.size} / 접속자: ${userCount()}]
                         | ========================== """.trimMargin())
 
                         //접속자 알림
@@ -110,7 +119,7 @@ class ChatServer {
 
             }
         }
-        executorServiceSubmit(runnable) // 스레드 풀에서 처리
+        ServerServiceSubmit(runnable) // 스레드 풀에서 처리
 
     }
 
@@ -126,10 +135,13 @@ class ChatServer {
                 if(!it.isClosed) it.close()
             }
 
-            executorService?.let{
+            ServerExecutorService?.let{
                 if(!it.isShutdown) it.shutdown()
             }
 
+            ClientExecutorService?.let{
+                if(!it.isShutdown) it.shutdown()
+            }
 
         }catch (e: Exception){
             e.printStackTrace()
@@ -138,47 +150,69 @@ class ChatServer {
 }
 
 
-class Client(val socket: Socket) {
+class Client(val socket: Socket) :Runnable{
 
-    init{
-        recevie()
-    }
-    fun recevie(){
+    private var userName: String? = null
+    private var profile: String? = null
+    private var email: String? = null
+    private var gender:String? = null
 
-        val runnable = object: Runnable {
+//    init{
+//        recevie()
+//    }
+//    fun recevie(){
+
+//        val runnable = object: Runnable {
 
             override fun run() {
+                val connectInfo = "${socket.getRemoteSocketAddress()}"
                 try{
                     socket?.getInputStream()?.bufferedReader(Charsets.UTF_8)?.forEachLine { it ->
 
                         var message: String = it
-                        if(message.toUpperCase() == "QUIT"){
+
+                        val userObj = JSONObject(it)
+                        val isDisconnect = userObj.get(MESSAGE_DATA).toString()
+
+                        if(isDisconnect == "QUIT"){
 //                            message = "${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} 접속종료 하였습니다."
                             message = JSONObject().apply {
-                                put(MESSAGE_KEY,"${socket.getRemoteSocketAddress()} : ${Thread.currentThread().getName()} 접속종료 하였습니다.")
+                                put(MESSAGE_DATA,"${connectInfo} 접속종료 하였습니다.")
                             }.toString()
                         }
 
 
                         ChatServer.connections.forEach { client ->
-
+                            var sendFlag = true
                             when(socket.getRemoteSocketAddress())
                             {
+                                //접속자 당사자용 메세지
                                 client.socket.remoteSocketAddress -> {
-                                    val userObj = JSONObject(it)
-                                    val user = userObj.get(NICKNAME_KEY).toString()
+                                    userName = userObj.get(NICKNAME_KEY).toString()
                                     val chkFlag = userObj.get(NICKNAME_CHK).toString()
 
-                                    println("USER = ${user} ")
+                                    println("USER info = ${userName} , chkFlag =${chkFlag}}")
 
                                     when{
-                                        !"Y".equals(chkFlag) && isUser(user) -> {
-                                            println("USER Name Sender ")
+
+                                        "N".equals(chkFlag) && isUser(connectInfo,userName!!) -> {
                                             message = JSONObject().apply {
-                                                put(MESSAGE_KEY,"이미 사용중인 닉내임 입니다.")
+                                                put(MESSAGE_DATA,"이미 사용중인 닉내임 입니다.")
                                                 put(NICKNAME_CHK,"N")
                                             }.toString()
                                         }
+
+                                        "QUIT".equals(isDisconnect) -> {
+                                            message = JSONObject().apply {
+                                                put(MESSAGE_DATA,"CLOSED")
+                                                put(NICKNAME_CHK,"Y")
+                                            }.toString()
+                                        }
+                                        "Y".equals(chkFlag) -> {
+                                            sendFlag = false
+                                        }
+
+
                                         else -> {
                                             message = userObj.apply {
                                                 put(NICKNAME_CHK,"Y")
@@ -198,64 +232,75 @@ class Client(val socket: Socket) {
                             }
 
                             println(message)
-                            client.send(message)
+                            if(sendFlag) {
+                                client.send(message,isDisconnect)
+                                sendFlag = true
+                            }
 
                         }
 
-                        if(it?.toUpperCase() == "QUIT"){
-                            throw IOException("close client")
-                        }
+
                     }
 
                 }catch(e: Exception){
                     println("""
-                     | [recevie 클라이언트 통신 안됨: ${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()}  ]"
+                     | [recevie 클라이언트 통신 안됨: ${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} / 접속자수: ${userCount()}  ]"
                     """.trimIndent())
 
-                    try {
-                        ChatServer.removeClient(this@Client)
-                        socket.close()
-                    }catch(io: IOException){
-                        io.printStackTrace()
-                    }
+//                    try {
+//                        ChatServer.removeClient(this@Client)
+//                        ChatServer.removeUser(connectInfo)
+//                        socket.close()
+//                    }catch(io: IOException){
+//                        io.printStackTrace()
+//                    }
                 }
-            }
-        }
-        ChatServer.executorServiceSubmit(runnable)
+//            }
+//        }
+
     }
 
-    fun send(data: String){
+    fun send(data: String,isDisconnect: String){
 
-        val runnable = object: Runnable{
-
-            override fun run() {
+//        val runnable = object: Runnable{
+            val connectInfo = "${socket.getRemoteSocketAddress()}"
+//            override fun run() {
                 try{
                     socket.outputStream?.let{
 //                        it.write( (jsonString + "\n").toByteArray(Charsets.UTF_8) )
                         it.write( (data + "\n").toByteArray(Charsets.UTF_8) )
                         it.flush()
                     }
+
+                    if(isDisconnect  == "QUIT"){
+//                                throw IOException("close client")
+                        ChatServer.removeClient(this@Client)
+                        ChatServer.removeUser(connectInfo)
+                        socket.close()
+                    }
+
                 }catch (e: Exception){
                     println("""
-                     | [send 클라이언트 통신 안됨: ${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} " ]"
+                     | [send 클라이언트 통신 안됨: ${socket.getRemoteSocketAddress()}  : ${Thread.currentThread().getName()} " / 접속자수 ${userCount()}]"
                     """.trimIndent())
-                    try {
-                        ChatServer.removeClient(this@Client)
-                        socket.close()
-                    }catch(io: IOException){
-                        io.printStackTrace()
-                    }
+
+//                    try {
+//                        ChatServer.removeClient(this@Client)
+//                        socket.close()
+//                    }catch(io: IOException){
+//                        io.printStackTrace()
+//                    }
                 }
-            }
-        }
-        ChatServer.executorServiceSubmit(runnable)
+//            }
+//        }
+//        ChatServer.ClientServiceSubmit(runnable)
     }
 
 
 
 
     companion object{
-        const val MESSAGE_KEY = "msgData"
+        const val MESSAGE_DATA = "msgData"
         const val MESSAGE_ID = "msgId"
         const val NICKNAME_KEY = "nickname_key"
         const val NICKNAME_CHK = "nickname_chk"
